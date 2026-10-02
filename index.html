@@ -63,7 +63,7 @@ const COLORS=[...RAINBOW,
   '#d4d4d8','#a1a1aa','#71717a','#52525b'];
 const ink=c=>{const n=parseInt(c.slice(1),16),l=(.299*(n>>16)+.587*(n>>8&255)+.114*(n&255))/255;return l>.62?'#18181b':'#fff'};
 const pst=c=>`background:${c};color:${ink(c)}`;
-const DEF_SET={id:'settings',rates:{bcv:0,p2p:0,cop:0},upd:{bcv:null,p2p:null,cop:null},sel:'bcv',initial:{usd_bin:0,usd_fis:0,cop:0,ves:0},lastBackup:null,list:[]};
+const DEF_SET={id:'settings',rates:{bcv:0,p2p:0,cop:0},upd:{bcv:null,p2p:null,cop:null},sel:'bcv',initial:{usd_bin:0,usd_fis:0,cop:0,ves:0},lastBackup:null,list:[],how:{bcv:null,p2p:null,cop:null},lastAuto:{bcv:0,p2p:0},lastCheck:null,rlog:[]};
 
 function ym(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
 let S={movs:[],tags:[],set:structuredClone(DEF_SET),persist:false};
@@ -111,13 +111,13 @@ const saveSet=()=>DB.put('kv',S.set);
 async function loadAll(){
   S.movs=await DB.all('movs');S.tags=await DB.all('tags');
   const st=(await DB.all('kv')).find(x=>x.id==='settings');
-  S.set=st?{...structuredClone(DEF_SET),...st,rates:{...DEF_SET.rates,...st.rates},upd:{...DEF_SET.upd,...st.upd},initial:{...DEF_SET.initial,...st.initial},list:st.list||[]}:structuredClone(DEF_SET);
+  S.set=st?{...structuredClone(DEF_SET),...st,rates:{...DEF_SET.rates,...st.rates},upd:{...DEF_SET.upd,...st.upd},initial:{...DEF_SET.initial,...st.initial},list:st.list||[],how:{...DEF_SET.how,...st.how},lastAuto:{...DEF_SET.lastAuto,...st.lastAuto},rlog:st.rlog||[]}:structuredClone(DEF_SET);
   await ensureMarket();
 }
 async function init(){
   await DB.open();await loadAll();
   if(navigator.storage?.persist){try{S.persist=await navigator.storage.persisted()||await navigator.storage.persist()}catch(e){}}
-  render();
+  render();autoRates();
 }
 
 /* ---------- cálculos ---------- */
@@ -564,11 +564,13 @@ async function calcToGasto(){
 /* ---------- vista: ajustes ---------- */
 function vSet(){
   const r=S.set.rates,u=S.set.upd,cats=S.tags.filter(t=>(t.kind||'cat')==='cat'),pers=S.tags.filter(t=>t.kind==='person'),prods=S.tags.filter(t=>t.kind==='prod');
-  const rateRow=(k,label,hint)=>`<div><label class="lbl">${label}</label><input class="inp" inputmode="decimal" value="${r[k]?nf(r[k],k==='cop'?0:2):''}" placeholder="${hint}" onchange="setRate('${k}',this.value)"><div class="text-[11px] text-zinc-500 mt-1">${u[k]?'Actualizada: '+fdate(u[k]):'Sin definir'}</div></div>`;
+  const rateRow=(k,label,hint)=>`<div><label class="lbl">${label}</label><input class="inp" inputmode="decimal" value="${r[k]?nf(r[k],k==='cop'?0:2):''}" placeholder="${hint}" onchange="setRate('${k}',this.value)"><div class="text-[11px] mt-1 flex items-center gap-1 ${S.set.how[k]==='auto'?'text-emerald-400':'text-zinc-500'}">${u[k]?`<i data-lucide="${S.set.how[k]==='auto'?'refresh-cw':'pencil'}" class="w-3 h-3"></i>${S.set.how[k]==='auto'?'Automática':'Manual'} · ${fdate(u[k])}`:'Sin definir'}</div></div>`;
   $('view').innerHTML=`
   <div class="card p-4 space-y-4"><h3 class="font-semibold flex items-center gap-2"><i data-lucide="trending-up" class="w-4 h-4"></i>Tasas</h3>
-    ${rateRow('bcv','Bolívar · BCV (Bs por $)','Ej: 360,50')}${rateRow('p2p','Bolívar · Binance P2P (Bs por $)','Ej: 420,00')}${rateRow('cop','Peso · Frontera (COP por $)','Ej: 3.100')}
+    <div class="flex items-center justify-between gap-2 rounded-[10px] bg-[#18181b] border border-[#34343a] p-2.5"><div class="text-[11px] text-zinc-400">BCV y paralelo se actualizan solos con internet.<br>Última consulta: <b>${S.set.lastCheck?fdate(S.set.lastCheck):'nunca'}</b></div><button onclick="autoRates(true)" class="shrink-0 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold flex items-center gap-1.5"><i data-lucide="refresh-cw" class="w-3.5 h-3.5 ${fetching?'animate-spin':''}"></i>Actualizar</button></div>
+    ${rateRow('bcv','Bolívar · BCV (Bs por $)','Ej: 360,50')}${rateRow('p2p','Bolívar · Paralelo / Binance P2P (Bs por $)','Ej: 420,00')}${rateRow('cop','Peso · Frontera (COP por $)','Ej: 3.100')}
     <div><label class="lbl">Tasa del bolívar a usar</label><div class="grid grid-cols-2 gap-2">${[['bcv','BCV'],['p2p','Binance P2P']].map(([v,t])=>`<button onclick="S.set.sel='${v}';saveSet();render()" class="seg ${S.set.sel===v?'on':''}">${t}</button>`).join('')}</div></div>
+    ${S.set.rlog.length?`<details class="rounded-[10px] border border-[#34343a]"><summary class="px-3 py-2.5 text-sm font-semibold cursor-pointer flex items-center gap-2"><i data-lucide="history" class="w-4 h-4"></i>Registro de cambios de tasa</summary><div class="px-3 pb-2">${S.set.rlog.map(x=>`<div class="flex items-center justify-between gap-2 py-1.5 border-t border-[#2e2e33] text-xs"><span class="text-zinc-400">${fdate(x.ts)}</span><span class="flex-1 text-zinc-300">${RNAME[x.k]} <b>${nf(x.v,x.k==='cop'?0:2)}</b></span><span class="${x.how==='auto'?'text-emerald-400':'text-zinc-500'}">${x.how==='auto'?'automática':'manual'}</span></div>`).join('')}</div></details>`:''}
   </div>
   <div class="card p-4 space-y-3"><h3 class="font-semibold flex items-center gap-2"><i data-lucide="wallet-cards" class="w-4 h-4"></i>Saldos iniciales</h3><p class="text-xs text-zinc-500">Lo que tenías en cada cuenta antes de empezar a registrar.</p>
     ${ACC.map(a=>`<div class="flex items-center gap-3"><span class="text-sm flex-1">${a.name}</span><input class="inp !w-36 text-right" inputmode="decimal" value="${S.set.initial[a.id]?nf(S.set.initial[a.id],a.cur==='COP'?0:2):''}" placeholder="0" onchange="setInitial('${a.id}',this.value)"></div>`).join('')}
@@ -587,7 +589,28 @@ function vSet(){
   <div class="card p-4 space-y-3 !border-red-900/60"><h3 class="font-semibold flex items-center gap-2 text-red-400"><i data-lucide="trash-2" class="w-4 h-4"></i>Borrar todo</h3><p class="text-xs text-zinc-500">Elimina movimientos, préstamos, tickets, etiquetas, tasas, saldos iniciales y la lista de mercado. No se puede deshacer.</p>
     <button onclick="resetAll()" class="w-full py-3 rounded-xl border border-red-800 text-red-400 font-semibold">Borrar todos los datos</button></div>`;
 }
-function setRate(k,v){const n=parseNum(v);if(v.trim()&&!(n>0))return toast('Valor no válido');S.set.rates[k]=n>0?n:0;S.set.upd[k]=n>0?new Date().toISOString():null;saveSet();render();toast('Tasa guardada')}
+function setRate(k,v){const n=parseNum(v);if(v.trim()&&!(n>0))return toast('Valor no válido');S.set.rates[k]=n>0?n:0;S.set.upd[k]=n>0?new Date().toISOString():null;S.set.how[k]=n>0?'manual':null;if(n>0)logRate(k,n,'manual');saveSet();render();toast('Tasa guardada')}
+const RNAME={bcv:'BCV',p2p:'Paralelo / P2P',cop:'Peso frontera'};
+function logRate(k,v,how){S.set.rlog.unshift({ts:new Date().toISOString(),k,v,how});S.set.rlog=S.set.rlog.slice(0,40)}
+let fetching=false;
+async function autoRates(force){
+  if(fetching||!navigator.onLine)return force&&toast('Sin conexión a internet');
+  if(!force&&S.set.lastCheck&&Date.now()-new Date(S.set.lastCheck)<20*60e3)return;
+  fetching=true;if(force&&ui.view==='set')render();
+  try{
+    const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),12000);
+    const r=await fetch('https://ve.dolarapi.com/v1/dolares',{cache:'no-store',signal:ctl.signal});clearTimeout(to);
+    if(!r.ok)throw 0;const d=await r.json(),pick=f=>+(d.find(x=>x.fuente===f)?.promedio)||0;
+    const got={bcv:pick('oficial'),p2p:pick('paralelo')},changed=[];
+    for(const k of ['bcv','p2p']){const v=Math.round(got[k]*100)/100;
+      if(v>0&&Math.abs(v-(S.set.lastAuto[k]||0))>=0.005){S.set.lastAuto[k]=v;S.set.rates[k]=v;S.set.upd[k]=new Date().toISOString();S.set.how[k]='auto';logRate(k,v,'auto');changed.push(RNAME[k]+' '+nf(v))}}
+    S.set.lastCheck=new Date().toISOString();await saveSet();
+    if(changed.length)toast('Tasa actualizada: '+changed.join(' · '));else if(force)toast('Las tasas ya están al día');
+  }catch(e){if(force)toast('No se pudo consultar la tasa. Puedes ponerla a mano.')}
+  fetching=false;render();
+}
+window.addEventListener('online',()=>autoRates());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)autoRates()});
 function setInitial(id,v){const n=v.trim()?parseNum(v):0;if(isNaN(n)||n<0){render();return toast('Valor no válido')}{const e=fundsError(null,[],{...S.set.initial,[id]:n});if(e){render();return bigAlert('r','Con ese saldo inicial ya habría gastos sin fondos. '+e)}}S.set.initial[id]=n;saveSet();render()}
 const swatches=(sel,fn)=>`<div class="grid grid-cols-9 gap-2 justify-items-center">${COLORS.map(c=>`<button onclick="${fn}('${c}')" class="w-7 h-7 rounded-full grid place-items-center ${c===sel?'ring-2 ring-white ring-offset-2 ring-offset-[#1f1f22]':''}" style="background:${c}">${c===sel?`<i data-lucide="check" class="w-4 h-4" style="color:${ink(c)}"></i>`:''}</button>`).join('')}</div>`;
 let TE=null;

@@ -1,4 +1,4 @@
-const VERSION='finanzas-v1';
+const VERSION='finanzas-v2';
 const LOCAL=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-maskable-512.png','./apple-touch-icon.png'];
 const CDN=['https://cdn.tailwindcss.com','https://cdn.jsdelivr.net/npm/lucide@1.49.0/dist/umd/lucide.min.js','https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js'];
 
@@ -19,6 +19,8 @@ self.addEventListener('activate',e=>{
 self.addEventListener('fetch',e=>{
   const r=e.request;if(r.method!=='GET')return;
   const u=new URL(r.url);
+  // solo se guardan la app y sus librerías; todo lo demás (p. ej. las tasas) siempre va a internet
+  if(u.origin!==location.origin&&!CDN.some(c=>r.url.startsWith(c)))return;
   // la app: primero internet (para recibir actualizaciones), si no hay, la copia guardada
   if(r.mode==='navigate'||(u.origin===location.origin&&u.pathname.endsWith('/index.html'))){
     e.respondWith((async()=>{
